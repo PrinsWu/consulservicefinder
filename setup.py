@@ -9,7 +9,7 @@ requirements = [
 
 setuptools.setup(
     name="consulservicefinder",
-    version="0.0.1",
+    version="0.0.2",
     author="Prins Wu",
     author_email="prinswu@gmail.com",
     keywords="consul microservice",
