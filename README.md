@@ -6,24 +6,19 @@ I can use below URL to get all services but that is not what I want.
 
 # Ideas
 
-### * Consul Query to search service by name
-### * Counte the service be used
+### * Consul Query to search service by service name
+### * Count the service be used
 ### * Return min count of services by same service name
 
 # Example
 <pre><code>
-    cs = ConsulServiceFinder()
-    # load query information from Consul
-    cs.queryLoadFromConsul()
-    cs.displayQuery()
+    csf = ConsulServiceFinder()
+    
     # create query by service name
-    service_name = "my-service"
-    cs.createQueryByServiceName(service_name)
-    query_name = "query_" + service_name 
-    cs.executeQuery(query_name)
-    # request one service from query
-    consulService = cs.requestOneService(query_name)
-    # compose service url from consulService object
-    print(cs.composeServiceUrl(consulService))
+    csf.createQueryByServiceName("microweb_microtalk", "q_test")
+
+    # find one service and compose it's url
+    csf.composeServiceUrl(csf.requestOneServiceByServiceName("microweb_microtalk"))
+    
 </code></pre>
 

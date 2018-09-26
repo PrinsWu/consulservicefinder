@@ -1,194 +1,192 @@
-import json
-import requests
+import logging
+import base64
+from consul import Consul, ConsulException
+from abc import abstractmethod
 
-class CounterableData:
-    def __init__(self, id=None, name=None):
-        self.state = "init"
-        self.used_count = 0
-        self.id = id
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger(__name__)
+
+class ConsulServiceFindStrategy:
+    def __init__(self, name="ConsulServiceFindStrategy"):
         self.name = name
-    def buildFail(self):
-        self.state = "fail"
-    def builded(self):
-        self.state = "builded"
-    def delete(self):
-        self.state = "init"
-    def isQueryAlive(self):
-        return self.state == "builded"
-    def used(self):
-        self.used_count += 1
-    def clearUsed(self):
-        self.used_count = 0
+    @abstractmethod
+    def find(self, csf, service_name):
+        pass
 
-class ConsulQuery(CounterableData):
-    def __init__(self, query=None, id=None):
-        super().__init__(id)
-        self.query = query
-        if self.query:
-            self.name = self.query["Name"]
+class LessCountFindStrategy(ConsulServiceFindStrategy):
+    def __init__(self, name="LessCountFindStrategy"):
+        super().__init__(name)
 
-class ConsulNode(CounterableData):
-    def __init__(self, node=None, id=None):
-        super().__init__(id)
-        self.node = node
-        if self.node:
-            self.name = self.node["Node"]
-
-class ConsulService(CounterableData):
-    def __init__(self, service=None, id=None):
-        super().__init__(id)
-        self.service = service
-        if self.service:
-            self.name = self.service["Service"]
-
-
-class ConsulServiceFinder:
-    def __init__(self, consul_ip="127.0.0.1", port=8500):
-        self.consul_ip = consul_ip
-        self.port = port
-        self.consul_url = "http://" + consul_ip + ":" + str(port) + "/v1/"
-        self.consul_query_dict = {}
-        self.consul_service_dict = {}
-
-    def queryLoadFromConsul(self):
-        # curl http://localhost:8500/v1/query
-        url = self.consul_url + "query"
-        print("call API:", url)
-        r = requests.get(url)
-        query_rep = r.json()
-        # print(query_rep)
+    def find(self, csf, service_name):
+        querys = csf.getQueryByServiceName(service_name)
+        if not querys:
+            return {"state": "fail", "message": "No query for the service_name."}
         
-        for q in query_rep:
-            query_name = q["Name"]
-            query = ConsulQuery(q, q["ID"])
-            query.builded()
-            self.consul_query_dict[query_name] = query
-        
-    def displayQuery(self):
-        self.displayCounterableDatas(self.consul_query_dict, "Query")
-
-    def displayService(self):
-        self.displayCounterableDatas(self.consul_service_dict, "Service")
-
-    def displayCounterableDatas(self, object_dict, object_type):
-        for _, data in object_dict.items():
-            self.displayCounterableData(data, object_type)
-            # print(object_type, "[", data.id, ":", data.name, "] (", data.state, ",", data.used_count, ")")
-    
-    def displayCounterableData(self, data, object_type):
-        print(object_type, "[", data.id, ":", data.name, "] (", data.state, ",", data.used_count, ")")
-
-    def createQueryByServiceName(self, service_name, query_name=None):
-        if not query_name:
-            query_name = "query_" + service_name
-        
-        if query_name in self.consul_query_dict:
-            consul_query = self.consul_query_dict[query_name]
-        else:
-            consul_query = ConsulQuery()
-
-        query = {
-            "Name": query_name,
-            "Token": "",
-            "Service": {
-                "Service": service_name
-            },
-            "DNS": {
-                "TTL": "10s"
-            }
-        }
-        # print(query)
-        consul_query.query = query
-
-        # curl --request POST --data @query.json http://127.0.0.1:8500/v1/query
-        url = self.consul_url + "query"
-        print("call API:", url)
-        headers = {'Content-type': 'application/json'}
-        r = requests.post(url, data=json.dumps(query), headers=headers)
-        query_rep = r.json()
-        # print(query_rep)
-        if "ID" in query_rep:
-            consul_query.id = query_rep["ID"]
-            consul_query.builded()
-        else:
-            consul_query.buildFail()
-        return consul_query
-
-    def deleteQuery(self, query_name):
-        if query_name not in self.consul_query_dict:
-            print("[" + query_name + "] not in consul_query")
-            return {}
-        consul_query = self.consul_query_dict[query_name]
-        if not consul_query.isQueryAlive():
-            print("[" + query_name + "] not alive")
-            return {}
-        if not consul_query.id:
-            print("[" + query_name + "] is is empty")
-            return {}
-        
-        # curl --request DELETE http://127.0.0.1:8500/v1/query/faa52b08-a295-b20c-5d01-b237a46c9a2d
-        url = self.consul_url + "query/" + consul_query.id
-        print("call API:", url)
-        # headers = {'Content-type': 'application/json'}
-        r = requests.delete(url)
-        query_rep = r.json()
-        # print(query_rep)
-        consul_query.delete()
-        return query_rep
-
-    def executeQuery(self, query_name):
-        if query_name not in self.consul_query_dict:
-            print("[" + query_name + "] not in consul_query")
-            return {}
-        consul_query = self.consul_query_dict[query_name]
-        if not consul_query.isQueryAlive():
-            print("[" + query_name + "] not alive")
-            return {}
-
-        # curl http://127.0.0.1:8500/v1/query/my-query-mt/execute?near=_agent
-        url = self.consul_url + "query/" + query_name + "/execute?near=_agent"
-        print("call API:", url)
-        # headers = {'Content-type': 'application/json'}
-        r = requests.get(url)
-        query_rep = r.json()
-        # print(query_rep)
-        consul_query.used()
-        return query_rep
-
-    def requestOneService(self, query_name):
-        query_rep = self.executeQuery(query_name)
+        # use first query
+        query_name = querys[0]
+        query_rep = csf.executeQuery(query_name)
         if "Nodes" in query_rep:
             nodes = query_rep["Nodes"]
-            candidate_ids = []
+            candidate_services = [] # tuple(service_id, service count)
+            services = {} # {service_id: service json}
             for node in nodes:
                 if "Service" in node:
                     service = node["Service"]
-                    id = service["ID"]
-                    candidate_ids.append(id)
-                    if id not in self.consul_service_dict:
-                        consul_service = ConsulService(id=id, service=service)
-                        consul_service.builded()
-                        self.consul_service_dict[id] = consul_service
+                    service_id = service["ID"]
+                    candidate_services.append((service_id, csf.getServiceCount(service_id)))
+                    services[service_id] = service
             
-            if candidate_ids:
-                candidate_ids_count = {id:self.consul_service_dict[id].used_count for id in candidate_ids}
-                id = min(candidate_ids_count, key=candidate_ids_count.get)
-                consul_service = self.consul_service_dict[id]
-                print("-" * 40, id)
-                self.displayCounterableData(consul_service, "Service")
-                # print(self.composeServiceUrl(consul_service))
-                return consul_service
-        return {}
+            if candidate_services:
+                min_count_service = min(candidate_services, key = lambda service: service[1])
+                service_id = min_count_service[0]
+                service = services[service_id]
+                # service["Address"] + ":" + str(service["Port"]
+                # add service count
+                csf.addServiceCount(service_id)
+                return service
+            else:
+                log.info("candidate_services is empty!")
+        else:
+            log.info("Nodes is empty!")
+        return {"state": "fail", "message": "Can't find a service by query."}
 
-    def composeServiceUrl(self, consulService):
-        return "http://" + consulService.service["Address"] + ":" + str(consulService.service["Port"])
-                    
+
+class ConsulServiceFinder:
+    def __init__(self, consul:Consul=None, defaultFindStrategy=None):
+        if not consul:
+            consul = Consul()
+        self.consul = consul
+        if not defaultFindStrategy:
+            self.defaultFindStrategy = LessCountFindStrategy()
+
+    def listAgentServices(self):
+        return self.consul.agent.services()
+
+    def listCatalogServices(self):
+        return self.consul.catalog.services()
+
+    def listQuery(self):
+        return self.consul.query.list()
+
+    # kv: [query_name]: query_id,service_name
+    # kv: [service_name]: query_name,..,...
+    # kv: [service_id]: count
+        
+    def decodeValue(self, value):
+        if type(value) is dict:
+            return self.decodeValue(value["Value"])
+        elif type(value) is bytes:
+            return value.decode("utf-8")
+        return value
+
+    def createQueryByServiceName(self, service_name, query_name):
+        # query = Consul.Query(self.consul)
+        query = self.consul.query
+        try:
+            rep = query.create(service_name, query_name)
+            log.debug("create Query:{}".format(query_name))
+
+            if "ID" in rep:
+                query_id = rep["ID"]
+                # setup kv: [query_name]: query_id,service_name
+                self.consul.kv.put(query_name, query_id + "," + service_name)
+                # setup kv: [service_name]: query_name,..,...
+                _, value = self.consul.kv.get(service_name)
+                log.debug(value)
+                if not value:
+                    value = query_name
+                else:
+                    value = self.decodeValue(value) + "," + query_name
+                self.consul.kv.put(service_name, value)
+                
+        except ConsulException as e:
+            rep = query.explain(query_name)
+            log.debug("explain Query:{}".format(query_name))
+            return {"state": "fail", "message": str(e)}
+        return rep
+
+    def deleteQuery(self, query_name, clear=True):
+        # delete kv: [query_name]: query_id,service_name
+        _, value = self.consul.kv.get(query_name)
+        if value:
+            self.consul.kv.delete(query_name)
+            value = self.decodeValue(value).split(",")
+            query_id = value[0]
+            try:
+                # delete query
+                self.consul.query.delete(query_id)
+            except ConsulException as e:
+                log.warn(str(e))
+            
+            if clear:
+                service_name = value[1]
+                # clear kv: [service_name]: query_name,..,...
+                querys = self.getQueryByServiceName(service_name)
+                querys.remove(query_name)
+                if not querys:
+                    self.consul.kv.delete(service_name)
+                else:
+                    value = ",".join(querys)
+                    self.consul.kv.put(service_name, value)
+
+    def deleteQueryByServiceName(self, service_name):
+        querys = self.getQueryByServiceName(service_name)
+        for query_name in querys:
+            self.deleteQuery(query_name, clear=False)
+        self.consul.kv.delete(service_name)
+
+    def getQueryByServiceName(self, service_name):
+        _, value = self.consul.kv.get(service_name)
+        querys = self.decodeValue(value)
+        if querys:
+            return querys.split(",")
+        else:
+            return []
+
+    def executeQuery(self, query_name):
+        query = self.consul.query
+        return query.execute(query_name)
+
+    def executeQueryByServiceName(self, service_name, query_type="ALL"):
+        querys = self.getQueryByServiceName(service_name)
+        if "ALL" == query_type:
+            rep = {}
+            for query_name in querys:
+                rep[query_name] = self.executeQuery(query_name)
+        else:
+            rep = self.executeQuery(querys[0])
+        return rep
+
+    def getServiceCount(self, service_id):
+        _, value = self.consul.kv.get(service_id)
+        if value:
+            return int(self.decodeValue(value))
+        
+        self.consul.kv.put(service_id, str(0))
+        return 0
+    
+    def addServiceCount(self, service_id):
+        count = self.getServiceCount(service_id)
+        count += 1
+        self.consul.kv.put(service_id, str(count))
+    
+    def composeServiceUrl(self, service):
+        return "http://" + service["Address"] + ":" + str(service["Port"])
+
+    def requestOneServiceByServiceName(self, service_name, findStrategy=None):
+        if not findStrategy:
+            return self.defaultFindStrategy.find(self, service_name)
+        return findStrategy.find(self, service_name)
+    
 
 if __name__ == "__main__":
-    cs = ConsulServiceFinder()
-    cs.queryLoadFromConsul()
-    cs.displayQuery()
-    # query_name = "my-query-mt" 
-    # cs.executeQuery(query_name)
-    # consulService = cs.requestOneService(query_name)
-    # print(cs.composeServiceUrl(consulService))
+    # pass
+    log.setLevel(logging.DEBUG)
+    csf = ConsulServiceFinder()
+    # csf.deleteQueryByServiceName("microweb_microtalk")
+    # log.debug(csf.createQueryByServiceName("microweb_microtalk", "q_test"))
+    log.debug(csf.composeServiceUrl(csf.requestOneServiceByServiceName("microweb_microtalk")))
+    # log.debug(csf.executeQuery("q_test"))
+    # print(csf.listQuery())
+    # print(csf.listAgentServices())
+    # print(csf.executeQueryByServiceName("microweb_microtalk"))
