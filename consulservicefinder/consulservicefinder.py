@@ -2,6 +2,7 @@ import logging
 import base64
 from consul import Consul, ConsulException
 from abc import abstractmethod
+import json
 
 logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
@@ -18,37 +19,62 @@ class LessCountFindStrategy(ConsulServiceFindStrategy):
         super().__init__(name)
 
     def find(self, csf, service_name):
-        querys = csf.getQueryByServiceName(service_name)
-        if not querys:
-            return {"state": "fail", "message": "No query for the service_name."}
+        all_services = csf.filterServicesByServiceName(service_name)
+        if not all_services:
+            return {"state": "fail", "message": "Can't find any service from Consul."}
         
-        # use first query
-        query_name = querys[0]
-        query_rep = csf.executeQuery(query_name)
-        if "Nodes" in query_rep:
-            nodes = query_rep["Nodes"]
-            candidate_services = [] # tuple(service_id, service count)
-            services = {} # {service_id: service json}
-            for node in nodes:
-                if "Service" in node:
-                    service = node["Service"]
-                    service_id = service["ID"]
-                    candidate_services.append((service_id, csf.getServiceCount(service_id)))
-                    services[service_id] = service
+        candidate_services = [] # tuple(service_id, service count)
+        services = {} # {service_id: service json}
+        for service in all_services:
+            service_id = service["ID"]
+            candidate_services.append((service_id, csf.getServiceCount(service_id)))
+            services[service_id] = service
             
-            if candidate_services:
-                min_count_service = min(candidate_services, key = lambda service: service[1])
-                service_id = min_count_service[0]
-                service = services[service_id]
-                # service["Address"] + ":" + str(service["Port"]
-                # add service count
-                csf.addServiceCount(service_id)
-                return service
-            else:
-                log.info("candidate_services is empty!")
+        if candidate_services:
+            min_count_service = min(candidate_services, key = lambda service: service[1])
+            service_id = min_count_service[0]
+            service = services[service_id]
+            # service["Address"] + ":" + str(service["Port"]
+            # add service count
+            csf.addServiceCount(service_id)
+            return service
         else:
-            log.info("Nodes is empty!")
+            log.warn("candidate_services is empty!")
         return {"state": "fail", "message": "Can't find a service by query."}
+
+    # def find(self, csf, service_name):
+    #     querys = csf.getQueryByServiceName(service_name)
+    #     # services = csf.filterServicesByServiceName(service_name)
+    #     if not querys:
+    #         return {"state": "fail", "message": "No query for the service_name."}
+        
+    #     # use first query
+    #     query_name = querys[0]
+    #     query_rep = csf.executeQuery(query_name)
+    #     if "Nodes" in query_rep:
+    #         nodes = query_rep["Nodes"]
+    #         candidate_services = [] # tuple(service_id, service count)
+    #         services = {} # {service_id: service json}
+    #         for node in nodes:
+    #             if "Service" in node:
+    #                 service = node["Service"]
+    #                 service_id = service["ID"]
+    #                 candidate_services.append((service_id, csf.getServiceCount(service_id)))
+    #                 services[service_id] = service
+            
+    #         if candidate_services:
+    #             min_count_service = min(candidate_services, key = lambda service: service[1])
+    #             service_id = min_count_service[0]
+    #             service = services[service_id]
+    #             # service["Address"] + ":" + str(service["Port"]
+    #             # add service count
+    #             csf.addServiceCount(service_id)
+    #             return service
+    #         else:
+    #             log.info("candidate_services is empty!")
+    #     else:
+    #         log.info("Nodes is empty!")
+    #     return {"state": "fail", "message": "Can't find a service by query."}
 
 
 class ConsulServiceFinder:
@@ -67,6 +93,15 @@ class ConsulServiceFinder:
 
     def listQuery(self):
         return self.consul.query.list()
+
+    def filterServicesByServiceName(self, service_name):
+        match_services = []
+        services = self.listAgentServices()
+        for _, service in services.items():
+            if service_name in service["Service"]:
+                match_services.append(service)
+        return match_services
+
 
     # kv: [query_name]: query_id,service_name
     # kv: [service_name]: query_name,..,...
@@ -184,9 +219,17 @@ if __name__ == "__main__":
     log.setLevel(logging.DEBUG)
     csf = ConsulServiceFinder()
     # csf.deleteQueryByServiceName("microweb_microtalk")
-    # log.debug(csf.createQueryByServiceName("microweb_microtalk", "q_test"))
-    log.debug(csf.composeServiceUrl(csf.requestOneServiceByServiceName("microweb_microtalk")))
+    # log.debug(csf.createQueryByServiceName("microweb2_microtalk", "q2_talk"))
+    # log.debug(csf.composeServiceUrl(csf.requestOneServiceByServiceName("microweb_microtalk")))
+    # log.debug(csf.createQueryByServiceName(service_name="microweb_microuser", query_name="user"))
+    # log.debug(csf.createQueryByServiceName(service_name="microweb_microtalk", query_name="talk"))
+    # log.debug(csf.getQueryByServiceName("microweb_microuser"))
+    # log.debug(csf.requestOneServiceByServiceName("microweb_microtalk"))
     # log.debug(csf.executeQuery("q_test"))
     # print(csf.listQuery())
-    # print(csf.listAgentServices())
-    # print(csf.executeQueryByServiceName("microweb_microtalk"))
+    # log.debug(csf.listAgentServices())
+    # log.debug(csf.createQueryByServiceName("microweb2_microtalk", "q2_talk"))
+    # log.debug(csf.executeQuery("q2_talk"))
+    # log.debug(csf.executeQueryByServiceName(service_name="microweb2_microtalk", query_type="SINGLE"))
+    # log.debug(json.dumps(csf.filterServicesByServiceName("microuser"), sort_keys=True, indent=4))
+    log.debug(csf.requestOneServiceByServiceName(service_name="microuser"))

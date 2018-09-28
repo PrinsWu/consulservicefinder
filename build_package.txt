@@ -1,0 +1,14 @@
+1. Each upload need used different version, ex: 0.0.1, 0.0.2 ...
+modify version in setup.py and clear old version file in dist
+
+2. build at local by setup.py
+python setup.py sdist bdist_wheel
+
+3. Upload to Test PyPI
+twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+You need registe a account on test.pypi before upload.
+
+4. Upload to PyPI
+twine upload dist/*
+You need registe a account on pypi before upload. (that are different account between pypi and test.pypi)
+
